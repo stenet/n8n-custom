@@ -78,7 +78,7 @@ ENV LD_LIBRARY_PATH=/opt/oracle/instantclient_23_9:$LD_LIBRARY_PATH \
     ODBCINI=/etc/odbc.ini
 
 # Installiere n8n (dieser Layer ändert sich bei Updates)
-RUN npm install -g n8n
+RUN npm install -g n8n@latest
 
 # Erstelle Verzeichnisse für Daten und Custom Nodes
 RUN mkdir -p /home/node/.n8n/nodes && \
