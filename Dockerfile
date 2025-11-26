@@ -77,8 +77,14 @@ ENV LD_LIBRARY_PATH=/opt/oracle/instantclient_23_9:$LD_LIBRARY_PATH \
     ODBCSYSINI=/etc \
     ODBCINI=/etc/odbc.ini
 
-# Installiere n8n (dieser Layer ändert sich bei Updates)
-RUN npm install -g n8n@latest
+# Build-Args zur Cache-Invalidierung und Cache-Clean
+ARG NPM_LAYER_SALT=""
+ARG NO_NPM_CACHE="true"
+
+# Installiere n8n; Salt sorgt dafür, dass der Layer neu gebaut wird; optional Cache clean
+RUN echo "salt=${NPM_LAYER_SALT}" >/dev/null && \
+    if [ "${NO_NPM_CACHE}" = "true" ]; then npm cache clean --force; fi && \
+    npm install -g n8n@latest
 
 # Erstelle Verzeichnisse für Daten und Custom Nodes
 RUN mkdir -p /home/node/.n8n/nodes && \
