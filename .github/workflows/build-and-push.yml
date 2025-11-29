@@ -33,3 +33,6 @@ jobs:
           tags: ${{ secrets.AZURE_REGISTRY }}/n8n:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            NPM_LAYER_SALT=${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+            NO_NPM_CACHE=true
