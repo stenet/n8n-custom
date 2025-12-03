@@ -36,16 +36,3 @@ jobs:
           build-args: |
             NPM_LAYER_SALT=${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
             NO_NPM_CACHE=true
-
-      - name: Build and Push Task-Runner Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.taskrunner
-          push: true
-          tags: ${{ secrets.AZURE_REGISTRY }}/n8n-taskrunner:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            NPM_LAYER_SALT=${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
-            NO_NPM_CACHE=true
