@@ -6,8 +6,24 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
+  # GitHub deaktiviert Schedules in öffentlichen Repos nach 60 Tagen ohne Aktivität;
+  # erneutes Aktivieren über die API setzt diesen Zähler zurück
+  keepalive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Workflow aktiv halten
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/build-and-push.yml/enable"
+
   build-and-push:
     runs-on: ubuntu-latest
 
