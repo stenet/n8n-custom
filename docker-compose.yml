@@ -1,0 +1,44 @@
+services:
+  n8n:
+    image: tipcloud.azurecr.io/n8n:3
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == sa-docker01
+    environment:
+      - N8N_HOST=n8n.jeannie.services
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
+      - N8N_LOG_LEVEL=debug
+      - WEBHOOK_URL=https://n8n.jeannie.services
+      - GENERIC_TIMEZONE=Europe/Vienna
+    networks:
+      - skilly
+    volumes:
+      - /data/n8n:/home/node/.n8n
+      - /data/n8n-local-files:/files
+
+  backup:
+    image: tipcloud.azurecr.io/n8n-backup:latest
+    deploy:
+      replicas: 1
+      placement:
+        # Muss auf demselben Host wie n8n laufen, da beide auf dieselbe SQLite-Datei zugreifen
+        constraints:
+          - node.hostname == sa-docker01
+    environment:
+      - TZ=Europe/Vienna
+      - BACKUP_SCHEDULE=0 2,14 * * *
+      - BACKUP_KEEP=10
+    volumes:
+      - /data/n8n:/n8n-data
+      - /mnt/share/docker/n8n/backups:/backups
+
+networks:
+  skilly:
+    external: true

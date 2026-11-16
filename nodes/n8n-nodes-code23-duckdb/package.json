@@ -1,0 +1,54 @@
+{
+  "name": "n8n-nodes-code23-duckdb",
+  "version": "0.1.15",
+  "description": "n8n node for executing SQL queries on DuckDB",
+  "license": "MIT",
+  "homepage": "",
+  "keywords": [
+    "n8n-community-node-package"
+  ],
+  "author": {
+    "name": "Stefan Heim",
+    "email": "stefan.heim@hotmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stenet/n8n-nodes-code23-duckdb.git"
+  },
+  "scripts": {
+    "build": "n8n-node build",
+    "build:watch": "tsc --watch",
+    "dev": "n8n-node dev",
+    "lint": "n8n-node lint",
+    "lint:fix": "n8n-node lint --fix",
+    "release": "n8n-node release",
+    "prepublishOnly": "n8n-node prerelease"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "strict": false,
+    "credentials": [
+      "dist/credentials/DuckDbApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/DuckDB/DuckDb.node.js"
+    ]
+  },
+  "dependencies": {
+    "@duckdb/node-api": "^1.4.2-r.1"
+  },
+  "devDependencies": {
+    "@n8n/node-cli": "*",
+    "@types/node": "^24.9.1",
+    "eslint": "9.32.0",
+    "prettier": "3.6.2",
+    "release-it": "^19.0.4",
+    "typescript": "5.9.2"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

@@ -7,6 +7,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      n8n_base_tag:
+        description: "Tag des offiziellen n8n-Images (z. B. 3.2.2-debian); leer = automatisch ermitteln"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -34,6 +39,28 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # n8n veröffentlicht kein mitlaufendes Tag für die stabile Debian-Variante. Daher die Version von
+      # "stable" auslesen; solange diese noch 2.x ist, den v3-Release-Candidate verwenden.
+      - name: Basis-Image ermitteln
+        id: base
+        env:
+          MANUAL_TAG: ${{ inputs.n8n_base_tag }}
+        run: |
+          if [ -n "$MANUAL_TAG" ]; then
+            tag="$MANUAL_TAG"
+          else
+            stable_version=$(docker buildx imagetools inspect n8nio/n8n:stable --format '{{json .Image}}' \
+              | jq -r '."linux/amd64".config.Labels."org.opencontainers.image.version"')
+            if [[ "$stable_version" == 3.* ]]; then
+              tag="${stable_version}-debian"
+            else
+              tag="v3-rc-debian"
+            fi
+          fi
+          docker buildx imagetools inspect "n8nio/n8n:$tag" >/dev/null
+          echo "Basis-Image: n8nio/n8n:$tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Login to Azure Container Registry
         uses: docker/login-action@v4
         with:
@@ -41,14 +68,25 @@ jobs:
           username: ${{ secrets.AZURE_REGISTRY_USERNAME }}
           password: ${{ secrets.AZURE_REGISTRY_PASSWORD }}
 
+      # :latest wird bewusst nicht mehr überschrieben, damit ein Deploy nicht ohne Migration auf v3 wechselt
       - name: Build and Push n8n Docker Image
         uses: docker/build-push-action@v7
         with:
           context: .
           push: true
-          tags: ${{ secrets.AZURE_REGISTRY }}/n8n:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          pull: true
+          tags: ${{ secrets.AZURE_REGISTRY }}/n8n:3
+          cache-from: type=gha,scope=n8n
+          cache-to: type=gha,mode=max,scope=n8n
           build-args: |
-            NPM_LAYER_SALT=${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
-            NO_NPM_CACHE=true
+            N8N_BASE_TAG=${{ steps.base.outputs.tag }}
+
+      - name: Build and Push Backup Docker Image
+        uses: docker/build-push-action@v7
+        with:
+          context: backup
+          push: true
+          pull: true
+          tags: ${{ secrets.AZURE_REGISTRY }}/n8n-backup:latest
+          cache-from: type=gha,scope=backup
+          cache-to: type=gha,mode=max,scope=backup
