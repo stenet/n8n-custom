@@ -138,6 +138,7 @@ main() {
   ensure_backup
   info "Lade $NEW_IMAGE ..."
   docker pull -q "$NEW_IMAGE" >/dev/null 2>&1 || warn "Pull fehlgeschlagen, verwende lokales Image."
+  docker image inspect "$NEW_IMAGE" >/dev/null 2>&1 || fail "Image $NEW_IMAGE nicht verfügbar (docker login?). n8n wurde nicht gestoppt."
   stop_n8n
   backup_sqlite
   migrate
