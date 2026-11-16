@@ -54,7 +54,8 @@ FROM n8nio/n8n:${N8N_BASE_TAG}
 
 ENV N8N_EDITOR_MODE=viewonly \
     N8N_CUSTOM_EXTENSIONS=/opt/n8n-custom-nodes \
-    N8N_RUNNERS_TASK_TIMEOUT=300
+    N8N_RUNNERS_TASK_TIMEOUT=300 \
+    N8N_UNVERIFIED_PACKAGES_ENABLED=true
 
 COPY --from=custom-nodes /opt/n8n-custom-nodes /opt/n8n-custom-nodes
 COPY migration/migrate-custom-node-types.js /opt/n8n-migration/
@@ -63,6 +64,9 @@ COPY --from=drivers /staging/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=drivers /opt/microsoft /opt/microsoft
 COPY --from=drivers /opt/oracle /opt/oracle
 COPY --from=drivers /etc/odbcinst.ini /etc/odbc.ini /etc/
+
+# n8n entpackt Community-Pakete mit "tar -xz"; dem offiziellen Image fehlt gzip
+COPY --from=drivers /usr/bin/gzip /usr/bin/gzip
 
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient_23_26 \
     ORACLE_HOME=/opt/oracle/instantclient_23_26 \
