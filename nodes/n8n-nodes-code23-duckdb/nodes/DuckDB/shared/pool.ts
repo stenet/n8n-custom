@@ -1,4 +1,6 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { normalizeDatabasePath } from "./normalizeDatabasePath";
+import type { InstanceOpenedListener } from "./instanceOpenedListener";
 
 export interface IDuckDBCredentials {
   path: string;
@@ -14,11 +16,14 @@ export interface IDuckDBCredentials {
 class DuckDBConnectionPool {
   private static instance: DuckDBConnectionPool;
 
-  // Gespeicherte Database-Instanzen nach Path
-  private instances: Map<string, DuckDBInstance> = new Map();
+  // Promise statt Instanz speichern, damit gleichzeitige Aufrufe (z. B. Quack-Start und Workflow)
+  // nicht zwei Instanzen auf dieselbe Datei öffnen
+  private instances: Map<string, Promise<DuckDBInstance>> = new Map();
 
   // Tracking der zuletzt registrierten ODBC-Verbindungen pro Instanz
   private odbcConnectionsRegistry: Map<string, string | undefined> = new Map();
+
+  private instanceOpenedListeners: InstanceOpenedListener[] = [];
 
   private constructor() {
   }
@@ -35,25 +40,53 @@ class DuckDBConnectionPool {
    * Initialisiert die Database-Instanz und registriert ODBC-Verbindungen falls nötig.
    */
   async getConnection(credentials: IDuckDBCredentials): Promise<DuckDBConnection> {
-    let instance = this.instances.get(credentials.path);
-
-    // Database-Instanz initialisieren falls nicht vorhanden
-    if (!instance) {
-      instance = await DuckDBInstance.create(credentials.path);
-      this.instances.set(credentials.path, instance);
-    }
+    const databasePath = normalizeDatabasePath(credentials.path);
+    const instance = await this.getDatabaseInstance(databasePath);
 
     // ODBC-Verbindungen prüfen und registrieren wenn nötig
-    const previousOdbcConnections = this.odbcConnectionsRegistry.get(credentials.path);
+    const previousOdbcConnections = this.odbcConnectionsRegistry.get(databasePath);
     const currentOdbcConnections = credentials.odbcConnections;
 
     if (currentOdbcConnections && previousOdbcConnections !== currentOdbcConnections) {
       await this.registerODBCConnections(instance, currentOdbcConnections);
-      this.odbcConnectionsRegistry.set(credentials.path, currentOdbcConnections);
+      this.odbcConnectionsRegistry.set(databasePath, currentOdbcConnections);
     }
 
     // Neue Connection zurückgeben
     return instance.connect();
+  }
+
+  /**
+   * Liefert die Database-Instanz zum Path und öffnet sie beim ersten Zugriff.
+   */
+  async getDatabaseInstance(databasePath: string): Promise<DuckDBInstance> {
+    const key = normalizeDatabasePath(databasePath);
+    let instance = this.instances.get(key);
+
+    if (!instance) {
+      instance = DuckDBInstance.create(key);
+      this.instances.set(key, instance);
+      instance.then(
+        (openedInstance) => this.notifyInstanceOpened(key, openedInstance),
+        // Fehlgeschlagenes Öffnen nicht cachen, damit der nächste Zugriff es erneut versucht
+        () => this.instances.delete(key),
+      );
+    }
+
+    return instance;
+  }
+
+  /**
+   * Meldet jede neu geöffnete Database-Instanz, z. B. um sie per Quack bereitzustellen.
+   */
+  onInstanceOpened(listener: InstanceOpenedListener): void {
+    this.instanceOpenedListeners.push(listener);
+  }
+
+  private notifyInstanceOpened(databasePath: string, instance: DuckDBInstance): void {
+    for (const listener of this.instanceOpenedListeners) {
+      listener(databasePath, instance);
+    }
   }
 
   /**
@@ -70,7 +103,7 @@ class DuckDBConnectionPool {
   async closeAll(): Promise<void> {
     for (const instance of this.instances.values()) {
       try {
-        instance.closeSync();
+        (await instance).closeSync();
       } catch {
         // Fehler beim Schließen ignorieren
       }
@@ -100,8 +133,8 @@ class DuckDBConnectionPool {
     const connection = await instance.connect();
 
     try {
-      // ODBC-Erweiterung einmalig installieren und laden
-      await connection.run("INSTALL nanodbc FROM community; LOAD nanodbc;");
+      // nanodbc wird ab DuckDB 1.5 nicht mehr gebaut; odbc_scanner ist die offizielle Nachfolge-Erweiterung
+      await connection.run("INSTALL odbc_scanner; LOAD odbc_scanner;");
 
       // Jede ODBC-Verbindung registrieren
       for (const line of lines) {
@@ -125,7 +158,7 @@ class DuckDBConnectionPool {
         const trimmedName = name.trim();
         const trimmedConnectionString = connectionString.trim();
 
-        const macroQuery = `CREATE OR REPLACE MACRO ${trimmedName}(sql) as table (select * from odbc_query(connection='${trimmedConnectionString}', query=sql))`;
+        const macroQuery = `CREATE OR REPLACE MACRO ${trimmedName}(sql) as table (select * from odbc_query('${trimmedConnectionString}', sql))`;
 
         try {
           await connection.run(macroQuery);

@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-code23-duckdb",
-  "version": "0.1.15",
+  "version": "0.2.0",
   "description": "n8n node for executing SQL queries on DuckDB",
   "license": "MIT",
   "homepage": "",
@@ -38,7 +38,7 @@
     ]
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.4.2-r.1"
+    "@duckdb/node-api": "2.0.0-r.1"
   },
   "devDependencies": {
     "@n8n/node-cli": "*",

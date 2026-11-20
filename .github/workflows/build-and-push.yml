@@ -81,6 +81,16 @@ jobs:
           build-args: |
             N8N_BASE_TAG=${{ steps.base.outputs.tag }}
 
+      - name: Build and Push DuckDB-UI Docker Image
+        uses: docker/build-push-action@v7
+        with:
+          context: n8n-duckdb-ui
+          push: true
+          pull: true
+          tags: ${{ secrets.AZURE_REGISTRY }}/n8n-duckdb-ui:latest
+          cache-from: type=gha,scope=duckdb-ui
+          cache-to: type=gha,mode=max,scope=duckdb-ui
+
       - name: Build and Push Backup Docker Image
         uses: docker/build-push-action@v7
         with:

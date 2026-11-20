@@ -1,0 +1,18 @@
+# Stack neben n8n; der Zugriff erfolgt ausschließlich über cloudflared mit Cloudflare Access davor,
+# da die DuckDB-UI selbst keine Anmeldung hat
+services:
+  n8n-duckdb-ui:
+    image: tipcloud.azurecr.io/n8n-duckdb-ui:latest
+    # QUACK_TOKEN muss mit DUCKDB_QUACK_TOKEN von n8n übereinstimmen
+    env_file: ./docker.env
+    environment:
+      - QUACK_HOST=n8n
+      - QUACK_PORT=9494
+    volumes:
+      - ./notebooks:/home/duckdb/.duckdb/extension_data
+    networks:
+      - n8n
+
+networks:
+  n8n:
+    external: true

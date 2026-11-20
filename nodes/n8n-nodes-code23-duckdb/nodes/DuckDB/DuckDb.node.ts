@@ -3,6 +3,10 @@ import { NodeConnectionTypes, NodeOperationError } from "n8n-workflow";
 import { executeSQL, executeSQLDescription } from "./resources/executeSQL";
 import { createTableFromJSON, createTableFromJSONDescription } from "./resources/createTableFromJSON";
 import * as credentialTest from "./methods/credentialTest";
+import { startQuackFromEnvironment } from "./shared/quack/startQuack";
+
+// n8n lädt das Modul beim Start; so sind bekannte Datenbanken ohne Workflow-Ausführung per Quack erreichbar
+startQuackFromEnvironment();
 
 export class DuckDb implements INodeType {
   description: INodeTypeDescription = {
