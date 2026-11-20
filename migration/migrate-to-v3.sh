@@ -44,13 +44,48 @@ inspect_container() {
   OLD_IMAGE=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_ID")
   SWARM_SERVICE=$(docker inspect -f '{{index .Config.Labels "com.docker.swarm.service.name"}}' "$CONTAINER_ID")
   DATA_SOURCE=$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"$N8N_DATA_PATH\"}}{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}{{end}}{{end}}" "$CONTAINER_ID")
-  NETWORK=$(docker inspect -f '{{range $name, $settings := .NetworkSettings.Networks}}{{$name}} {{end}}' "$CONTAINER_ID" | awk '{print $1}')
   # Nur n8n-Einstellungen übernehmen, nicht die Laufzeitumgebung des alten Images
   docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER_ID" \
     | grep -E '^(DB_|N8N_|GENERIC_TIMEZONE=|TZ=)' > "$ENV_FILE" || true
   DB_TYPE=$(grep '^DB_TYPE=' "$ENV_FILE" | cut -d= -f2- || true)
   DB_TYPE=${DB_TYPE:-sqlite}
+  DB_HOST=$(grep '^DB_POSTGRESDB_HOST=' "$ENV_FILE" | cut -d= -f2- || true)
+  DB_HOST=${DB_HOST:-localhost}
   [ -n "$DATA_SOURCE" ] || fail "Kein Volume für $N8N_DATA_PATH gefunden."
+}
+
+pull_new_image() {
+  info "Lade $NEW_IMAGE ..."
+  docker pull -q "$NEW_IMAGE" >/dev/null 2>&1 || warn "Pull fehlgeschlagen, verwende lokales Image."
+  docker image inspect "$NEW_IMAGE" >/dev/null 2>&1 || fail "Image $NEW_IMAGE nicht verfügbar (docker login?). n8n wurde nicht gestoppt."
+}
+
+list_networks() {
+  # Das Swarm-Ingress-Netzwerk lässt sich nicht an einzelne Container anhängen
+  docker inspect -f '{{range $name, $settings := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$CONTAINER_ID" \
+    | grep -vxE 'ingress|' || true
+}
+
+can_reach_db_host() {
+  docker run --rm --network "$1" --entrypoint getent "$NEW_IMAGE" hosts "$DB_HOST" >/dev/null 2>&1
+}
+
+suggest_network() {
+  local network
+  for network in "$@"; do
+    can_reach_db_host "$network" && { echo "$network"; return; }
+  done
+  echo "$1"
+}
+
+select_network() {
+  NETWORK=""
+  [ "$DB_TYPE" != "sqlite" ] || return 0
+  local networks
+  mapfile -t networks < <(list_networks)
+  [ ${#networks[@]} -gt 1 ] || { NETWORK=${networks[0]:-}; return 0; }
+  info "Der Container hängt an mehreren Netzwerken: ${networks[*]}"
+  NETWORK=$(ask "Netzwerk, über das $DB_HOST erreichbar ist" "$(suggest_network "${networks[@]}")")
 }
 
 show_summary() {
@@ -133,12 +168,11 @@ main() {
   select_container
   inspect_container
   NEW_IMAGE=$(ask "Neues Image" "$DEFAULT_NEW_IMAGE")
+  pull_new_image
+  select_network
   show_summary
   confirm "Migration mit diesen Einstellungen starten? n8n wird dabei gestoppt." || fail "Abgebrochen."
   ensure_backup
-  info "Lade $NEW_IMAGE ..."
-  docker pull -q "$NEW_IMAGE" >/dev/null 2>&1 || warn "Pull fehlgeschlagen, verwende lokales Image."
-  docker image inspect "$NEW_IMAGE" >/dev/null 2>&1 || fail "Image $NEW_IMAGE nicht verfügbar (docker login?). n8n wurde nicht gestoppt."
   stop_n8n
   backup_sqlite
   migrate
