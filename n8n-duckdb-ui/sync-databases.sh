@@ -1,6 +1,7 @@
 #!/bin/sh
 # Gleicht die eingebundenen Datenbanken regelmäßig mit dem Quack-Verzeichnis von n8n ab:
-# bindet neue ein und verbindet nach einem n8n-Neustart (neue Generation) alle neu
+# bindet neue ein, verbindet nach einem n8n-Neustart (neue Generation) alle neu und bindet eine
+# Datenbank neu ein, wenn sich ihr Katalog geändert hat
 set -u
 
 : "${SYNC_INTERVAL:=30}"
@@ -31,12 +32,25 @@ listDatabases() {
     "SELECT name, port, generation FROM quack_query('${directoryUri}', 'SELECT name, port, generation FROM databases', token = '${escapedToken}', disable_ssl = true)"
 }
 
+# Die UI sieht nur den Katalog vom Zeitpunkt des ATTACH; später in n8n angelegte Tabellen,
+# Spalten oder Macros fehlen bis zum erneuten Einbinden (nachgeprüft)
+catalogFingerprint() {
+  duckdb :memory: -csv -noheader -c \
+    "SELECT * FROM quack_query('quack:${QUACK_HOST}:${1}', 'SELECT md5(string_agg(entry, chr(10) ORDER BY entry)) FROM (
+      SELECT schema_name || ''.'' || table_name || ''.'' || column_name || '' '' || data_type AS entry
+      FROM duckdb_columns() WHERE database_name = current_database()
+      UNION ALL
+      SELECT schema_name || ''.'' || function_name || '' '' || function_type
+      FROM duckdb_functions() WHERE database_name = current_database() AND NOT internal)',
+      token = '${escapedToken}', disable_ssl = true)"
+}
+
 attach() {
   echo "Binde ${1} (Port ${2}) ein"
   sendToUi "DETACH DATABASE IF EXISTS ${1};"
   sendToUi "ATTACH 'quack:${QUACK_HOST}:${2}' AS ${1} (TOKEN '${escapedToken}', DISABLE_SSL true);"
   grep -v "^${1} " "$attachedState" > "${attachedState}.new"
-  echo "${1} ${2} ${3}" >> "${attachedState}.new"
+  echo "${1} ${2} ${3} ${4}" >> "${attachedState}.new"
   mv "${attachedState}.new" "$attachedState"
 }
 
@@ -48,8 +62,12 @@ syncOnce() {
     printf "%s" "$name" | grep -Eq '^[a-z_][a-z0-9_]*$' || continue
     printf "%s" "$port" | grep -Eq '^[0-9]+$' || continue
 
-    if ! grep -qx "${name} ${port} ${generation}" "$attachedState" || ! isAttached "$name"; then
-      attach "$name" "$port" "$generation"
+    # Ist der Katalog gerade nicht abrufbar, gilt der bekannte Stand, damit nicht ständig neu eingebunden wird
+    knownFingerprint=$(awk -v name="$name" '$1 == name { print $4 }' "$attachedState")
+    fingerprint=$(catalogFingerprint "$port" 2>/dev/null) || fingerprint=$knownFingerprint
+
+    if ! grep -qx "${name} ${port} ${generation} ${fingerprint}" "$attachedState" || ! isAttached "$name"; then
+      attach "$name" "$port" "$generation" "$fingerprint"
     fi
   done
 }
