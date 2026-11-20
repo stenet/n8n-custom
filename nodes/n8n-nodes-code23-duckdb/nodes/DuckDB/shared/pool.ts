@@ -1,6 +1,8 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { normalizeDatabasePath } from "./normalizeDatabasePath";
 import type { InstanceOpenedListener } from "./instanceOpenedListener";
+import { OdbcConnectionRegistry } from "./odbc/odbcConnectionRegistry";
+import { parseOdbcConnections } from "./odbc/parseOdbcConnections";
 
 export interface IDuckDBCredentials {
   path: string;
@@ -20,8 +22,10 @@ class DuckDBConnectionPool {
   // nicht zwei Instanzen auf dieselbe Datei öffnen
   private instances: Map<string, Promise<DuckDBInstance>> = new Map();
 
-  // Tracking der zuletzt registrierten ODBC-Verbindungen pro Instanz
-  private odbcConnectionsRegistry: Map<string, string | undefined> = new Map();
+  // Pro Instanz die zuletzt registrierte ODBC-Konfiguration und die offenen Verbindungen dazu
+  private registeredOdbcConnections: Map<string, string> = new Map();
+  private odbcRegistries: Map<string, OdbcConnectionRegistry> = new Map();
+  private odbcRegistrations: Map<string, Promise<void>> = new Map();
 
   private instanceOpenedListeners: InstanceOpenedListener[] = [];
 
@@ -43,17 +47,64 @@ class DuckDBConnectionPool {
     const databasePath = normalizeDatabasePath(credentials.path);
     const instance = await this.getDatabaseInstance(databasePath);
 
-    // ODBC-Verbindungen prüfen und registrieren wenn nötig
-    const previousOdbcConnections = this.odbcConnectionsRegistry.get(databasePath);
-    const currentOdbcConnections = credentials.odbcConnections;
+    const odbcConnections = credentials.odbcConnections;
 
-    if (currentOdbcConnections && previousOdbcConnections !== currentOdbcConnections) {
-      await this.registerODBCConnections(instance, currentOdbcConnections);
-      this.odbcConnectionsRegistry.set(databasePath, currentOdbcConnections);
+    // Laufende Registrierung abwarten, damit gleichzeitige Aufrufe nicht doppelt registrieren
+    await this.odbcRegistrations.get(databasePath);
+
+    if (odbcConnections && this.registeredOdbcConnections.get(databasePath) !== odbcConnections) {
+      await this.registerOdbcConnections(databasePath, instance, odbcConnections);
     }
 
     // Neue Connection zurückgeben
     return instance.connect();
+  }
+
+  /**
+   * Öffnet die ODBC-Verbindungen des Credentials neu, z. B. nachdem die Gegenstelle sie getrennt hat.
+   */
+  async reconnectOdbc(credentials: IDuckDBCredentials): Promise<void> {
+    if (!credentials.odbcConnections) {
+      return;
+    }
+
+    const databasePath = normalizeDatabasePath(credentials.path);
+    const instance = await this.getDatabaseInstance(databasePath);
+    await this.registerOdbcConnections(databasePath, instance, credentials.odbcConnections);
+  }
+
+  private registerOdbcConnections(
+    databasePath: string,
+    instance: DuckDBInstance,
+    odbcConnections: string,
+  ): Promise<void> {
+    const pending = this.odbcRegistrations.get(databasePath);
+
+    if (pending) {
+      return pending;
+    }
+
+    const registration = this.runOdbcRegistration(databasePath, instance, odbcConnections).finally(() =>
+      this.odbcRegistrations.delete(databasePath),
+    );
+    this.odbcRegistrations.set(databasePath, registration);
+    return registration;
+  }
+
+  private async runOdbcRegistration(
+    databasePath: string,
+    instance: DuckDBInstance,
+    odbcConnections: string,
+  ): Promise<void> {
+    let registry = this.odbcRegistries.get(databasePath);
+
+    if (!registry) {
+      registry = new OdbcConnectionRegistry();
+      this.odbcRegistries.set(databasePath, registry);
+    }
+
+    await registry.register(instance, parseOdbcConnections(odbcConnections));
+    this.registeredOdbcConnections.set(databasePath, odbcConnections);
   }
 
   /**
@@ -109,68 +160,8 @@ class DuckDBConnectionPool {
       }
     }
     this.instances.clear();
-    this.odbcConnectionsRegistry.clear();
-  }
-
-  /**
-   * Registriert ODBC-Verbindungen für eine Database-Instanz.
-   * Format: NAME=connection_string (ein pro Zeile)
-   */
-  private async registerODBCConnections(
-    instance: DuckDBInstance,
-    odbcConnectionsString: string,
-  ): Promise<void> {
-    const lines = odbcConnectionsString
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-
-    // Nur wenn ODBC-Verbindungen vorhanden
-    if (lines.length === 0) {
-      return;
-    }
-
-    const connection = await instance.connect();
-
-    try {
-      // nanodbc wird ab DuckDB 1.5 nicht mehr gebaut; odbc_scanner ist die offizielle Nachfolge-Erweiterung
-      await connection.run("INSTALL odbc_scanner; LOAD odbc_scanner;");
-
-      // Jede ODBC-Verbindung registrieren
-      for (const line of lines) {
-        const equalsIndex = line.indexOf("=");
-
-        if (equalsIndex === -1) {
-          throw new Error(
-            `Invalid ODBC connection format: "${line}". Expected: NAME=connection_string`,
-          );
-        }
-
-        const name = line.substring(0, equalsIndex);
-        const connectionString = line.substring(equalsIndex + 1);
-
-        if (!name || !connectionString) {
-          throw new Error(
-            `Invalid ODBC connection format: "${line}". Expected: NAME=connection_string`,
-          );
-        }
-
-        const trimmedName = name.trim();
-        const trimmedConnectionString = connectionString.trim();
-
-        const macroQuery = `CREATE OR REPLACE MACRO ${trimmedName}(sql) as table (select * from odbc_query('${trimmedConnectionString}', sql))`;
-
-        try {
-          await connection.run(macroQuery);
-        } catch (error) {
-          throw new Error(
-            `Failed to register ODBC connection "${trimmedName}": ${(error as Error).message}`,
-          );
-        }
-      }
-    } finally {
-      connection.closeSync();
-    }
+    this.registeredOdbcConnections.clear();
+    this.odbcRegistries.clear();
   }
 }
 

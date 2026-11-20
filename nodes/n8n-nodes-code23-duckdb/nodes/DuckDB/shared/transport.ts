@@ -2,6 +2,7 @@ import type { DuckDBValue } from "@duckdb/node-api";
 import type { IDataObject } from "n8n-workflow";
 import { duckDBPool, type IDuckDBCredentials } from "./pool";
 import { toRedactedError } from "./redactSecrets";
+import { explainOdbcError, isOdbcConnectionLost } from "./odbc/odbcErrors";
 
 /**
  * Prüft, ob eine SQL-Query eine SELECT-Abfrage ist (inkl. CTEs).
@@ -32,10 +33,28 @@ export async function executeDuckDBQuery(
   parameters?: Record<string, DuckDBValue>,
 ): Promise<IDataObject[]> {
   try {
+    return await runQueryWithReconnect(credentials, query, parameters);
+  } catch (error) {
+    // Fehler von odbc_connect enthalten den vollständigen Connection-String samt Passwort
+    throw toRedactedError(explainOdbcError(error as Error));
+  }
+}
+
+async function runQueryWithReconnect(
+  credentials: IDuckDBCredentials,
+  query: string,
+  parameters?: Record<string, DuckDBValue>,
+): Promise<IDataObject[]> {
+  try {
     return await runQuery(credentials, query, parameters);
   } catch (error) {
-    // Fehler von odbc_query enthalten den vollständigen Connection-String samt Passwort
-    throw toRedactedError(error);
+    if (!isOdbcConnectionLost(error as Error)) {
+      throw error;
+    }
+
+    // Die ODBC-Verbindungen bleiben dauerhaft offen; trennt die Gegenstelle sie, einmal neu verbinden
+    await duckDBPool.reconnectOdbc(credentials);
+    return runQuery(credentials, query, parameters);
   }
 }
 
